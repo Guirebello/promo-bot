@@ -1,0 +1,11 @@
+[Unit]
+Description=promo-bot (filtro de promoções do Telegram)
+
+[Service]
+WorkingDirectory=%h/promo-bot
+ExecStart=%h/promo-bot/venv/bin/python promo_bot.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

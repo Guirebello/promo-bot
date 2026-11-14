@@ -1,0 +1,12 @@
+# segredos: login da conta/bot e credenciais. NUNCA commitar
+.env
+*.session
+*.session-journal
+
+# estado local (canais, palavras)
+state.json
+state.json.*
+state.tmp
+
+venv/
+__pycache__/
