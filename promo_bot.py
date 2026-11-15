@@ -39,8 +39,8 @@ LOGGED_OUT = (
 
 GERAL = "geral"  # grupo lido por todos os canais; não pode ser apagado
 COMMANDS = [
-    ("add", "vigiar palavras: /add <palavras> [#grupo]"),
-    ("rm", "parar de vigiar: /rm <palavras> [#grupo]"),
+    ("add", "vigiar: /add <palavra> [-[ignorar, ...]] [#grupo]"),
+    ("rm", "parar de vigiar ou de ignorar: /rm <palavra> [-[...]] [#grupo]"),
     ("rmgroup", "apagar grupo: /rmgroup #grupo"),
     ("watch", "vigiar canal: /watch <link> <apelido> [#grupos]"),
     ("unwatch", "parar de vigiar canal: /unwatch <apelido>"),
@@ -51,7 +51,9 @@ COMMANDS = [
 ]
 HELP = """Palavras (sem #grupo vão pro geral, que todo canal lê):
 /add <palavras> [#grupo] — vigiar (várias: separe por vírgula; grupo novo é criado)
-/rm <palavras> [#grupo] — parar de vigiar
+/add <palavra> -[a, b] — ignorar posts dessa palavra que citem "a" ou "b" (soma à lista)
+/rm <palavra> -[a] — parar de ignorar "a"
+/rm <palavras> [#grupo] — parar de vigiar (some junto com o que ela ignora)
 /rmgroup #grupo — apagar grupo
 
 Canais:
@@ -64,11 +66,15 @@ Canais:
 /help — esta ajuda
 
 Ex: /add ssd, rtx 4060 #pc  e depois  /link hardware #pc
+Ex: /add switch 2 -[case, capa protetora]
 Post de canal com alguma palavra que ele lê é encaminhado pra cá.
-Maiúscula e acento não importam."""
+Maiúscula e acento não importam. Exclusão bate por palavra inteira
+(e plural): -[capa] corta "capas", mas não "capacidade"."""
 
 CMD_RE = re.compile(r"^/(?P<cmd>\w+)(?:@\w+)?(?:\s+(?P<arg>.*))?$", re.S)
 GROUP_RE = re.compile(r"#([\w-]+)")
+# exclusões: "-[a, b c]" (lista) ou "-palavra" (atalho pra uma só)
+EXCL_RE = re.compile(r"(?:^|\s)-(?:\[([^\]]*)\]|([^\s\[\],]+))")
 LINK_RE = re.compile(
     r"^(?:https?://)?(?:t|telegram)\.me/"
     r"(?:(?:joinchat/|\+)(?P<invite>[\w-]+)|c/(?P<cid>\d+)|(?:s/)?(?P<user>[a-z]\w{3,}))",
@@ -95,9 +101,54 @@ def keyword_re(kw: str) -> re.Pattern:
     return re.compile(r"(?<!\w)" + r"[\W_]*".join(map(re.escape, norm(kw).split())))
 
 
-def matching(keywords: list[str], text: str) -> list[str]:
+def exclusion_re(ex: str) -> re.Pattern:
+    # palavra inteira com plural opcional: "capa" pega "capas", mas não "capacidade"
+    words = [re.escape(w) + r"(?:e?s)?" for w in norm(ex).split()]
+    return re.compile(r"(?<!\w)" + r"[\W_]*".join(words) + r"(?!\w)")
+
+
+def matching(entries: list[tuple[str, list[str]]], text: str) -> list[str]:
+    """entries: [(palavra, exclusões)]. Bate se a palavra aparece e nenhuma exclusão dela aparece."""
     t = norm(text)
-    return [k for k in keywords if keyword_re(k).search(t)]
+    return [
+        k for k, excl in entries
+        if keyword_re(k).search(t) and not any(exclusion_re(x).search(t) for x in excl)
+    ]
+
+
+def split_top(arg: str) -> list[str]:
+    """Separa por vírgula, menos as vírgulas dentro de [...]."""
+    parts, depth, cur = [], 0, ""
+    for ch in arg:
+        depth += (ch == "[") - (ch == "]" and depth > 0)
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return parts + [cur]
+
+
+def parse_entries(arg: str) -> list[tuple[str, list[str]]]:
+    """'switch 2 -[case, capa], ps5 -controle' -> [('switch 2', ['case', 'capa']), ('ps5', ['controle'])]"""
+    entries = []
+    for item in split_top(arg):
+        if not norm(item):
+            continue
+        excl = []
+        for lst, one in EXCL_RE.findall(item):
+            excl += [x.strip() for x in (lst.split(",") if lst else [one]) if norm(x)]
+        kw = EXCL_RE.sub(" ", item).strip()
+        if "[" in kw or "]" in kw:
+            raise UserError(f"Colchete sem par em: {item.strip()}")
+        if not norm(kw):
+            raise UserError("Falta a palavra antes do -[...]. Ex: /add switch 2 -[case]")
+        entries.append((kw, excl))
+    return entries
+
+
+def fmt_entry(kw: str, excl: list[str]) -> str:
+    return kw + (f" -[{', '.join(excl)}]" if excl else "")
 
 
 def parse_link(link: str) -> tuple[str, str] | None:
@@ -140,9 +191,13 @@ def post_link(chat, msg_id: int) -> str:
 # ---------- estado ----------
 class State:
     def __init__(self, data: dict):
-        # versão antiga só tinha "keywords" (sem grupos): viram o geral
-        self.groups: dict[str, list[str]] = data.get("groups") or {GERAL: data.get("keywords", [])}
-        self.groups.setdefault(GERAL, [])
+        # grupo -> {palavra: [exclusões]}. Migra formatos antigos:
+        # só "keywords" (sem grupos) vira o geral; grupo como lista vira dict sem exclusões
+        raw = data.get("groups") or {GERAL: data.get("keywords", [])}
+        self.groups: dict[str, dict[str, list[str]]] = {
+            g: v if isinstance(v, dict) else {k: [] for k in v} for g, v in raw.items()
+        }
+        self.groups.setdefault(GERAL, {})
         # apelido -> {id, title, link, groups, last_id (último post já checado)}
         self.channels: dict[str, dict] = data.get("channels", {})
         for c in self.channels.values():
@@ -163,11 +218,11 @@ class State:
     def watched(self) -> set[int]:
         return {c["id"] for c in self.channels.values()}
 
-    def keywords_for(self, chat_id: int) -> list[str]:
+    def keywords_for(self, chat_id: int) -> list[tuple[str, list[str]]]:
         c = next((c for c in self.channels.values() if c["id"] == chat_id), None)
         if not c:
             return []
-        return [k for g in [GERAL, *c["groups"]] for k in self.groups.get(g, [])]
+        return [kv for g in [GERAL, *c["groups"]] for kv in self.groups.get(g, {}).items()]
 
     def channel(self, alias: str) -> dict:
         c = self.channels.get(alias.lower())
@@ -175,7 +230,7 @@ class State:
             raise UserError(f"Nenhum canal com apelido '{alias}'. Veja /list")
         return c
 
-    def group(self, name: str) -> list[str]:
+    def group(self, name: str) -> dict[str, list[str]]:
         if name not in self.groups:
             raise UserError(f"Grupo #{name} não existe. Crie com /add <palavras> #{name}")
         return self.groups[name]
@@ -361,46 +416,71 @@ class App:
         await e.reply(reply, link_preview=False)
 
     @staticmethod
-    def words_and_group(arg: str, usage: str) -> tuple[list[str], str]:
+    def entries_and_group(arg: str, usage: str) -> tuple[list[tuple[str, list[str]]], str]:
         rest, groups = split_groups(arg)
         if len(groups) > 1:
             raise UserError("Use um #grupo por vez.")
-        words = [k.strip() for k in rest.split(",") if norm(k)]
-        if not words:
+        entries = parse_entries(rest)
+        if not entries:
             raise UserError(usage)
-        return words, groups[0] if groups else GERAL
+        return entries, groups[0] if groups else GERAL
+
+    @staticmethod
+    def find(items, name: str) -> str | None:
+        """Item já salvo com o mesmo nome normalizado (ignora maiúscula/acento)."""
+        return next((k for k in items if norm(k) == norm(name)), None)
 
     async def cmd_add(self, arg: str) -> str:
-        words, g = self.words_and_group(arg, "Uso: /add <palavras> [#grupo]\nEx: /add ssd, rtx 4060 #pc")
+        entries, g = self.entries_and_group(
+            arg, "Uso: /add <palavras> [#grupo]\nEx: /add ssd, rtx 4060 #pc\nEx: /add switch 2 -[case, capa]"
+        )
         is_new = g not in self.state.groups
-        kws = self.state.groups.setdefault(g, [])
-        have = {norm(k) for k in kws}
-        added, dup = [], []
-        for k in words:
-            (dup if norm(k) in have else added).append(k)
-            have.add(norm(k))
-        kws += added
+        kws = self.state.groups.setdefault(g, {})
+        lines = []
+        for kw, excl in entries:
+            key = self.find(kws, kw)
+            created = key is None
+            if created:
+                key = kw
+                kws[key] = []
+            new_excl = []
+            for x in excl:
+                if not self.find(kws[key], x):
+                    kws[key].append(x)
+                    new_excl.append(x)
+            if created:
+                lines.append(f"✅ Vigiando em {label(g)}: {fmt_entry(key, kws[key])}")
+            elif new_excl:
+                lines.append(f"✏️ Atualizada em {label(g)}: {fmt_entry(key, kws[key])}")
+            else:
+                lines.append(f"Já estava em {label(g)}: {fmt_entry(key, kws[key])}")
         self.state.save()
-        lines = [f"✅ Vigiando em {label(g)}: {', '.join(added)}"] if added else []
-        lines += [f"Já estava em {label(g)}: {', '.join(dup)}"] if dup else []
         if is_new:
             lines.append(f"Grupo novo. Ligue a canais com /link <apelido> #{g}")
         return "\n".join(lines)
 
     async def cmd_rm(self, arg: str) -> str:
-        words, g = self.words_and_group(arg, "Uso: /rm <palavras> [#grupo]")
+        entries, g = self.entries_and_group(arg, "Uso: /rm <palavras> [#grupo]\nEx: /rm switch 2 -[capa]")
         kws = self.state.group(g)
-        removed, missing = [], []
-        for w in words:
-            hit = next((k for k in kws if norm(k) == norm(w)), None)
-            if hit:
-                kws.remove(hit)
-                removed.append(hit)
+        lines = []
+        for kw, excl in entries:
+            key = self.find(kws, kw)
+            if key is None:
+                lines.append(f"Não achei em {label(g)}: {kw}")
+            elif excl:  # tira só as exclusões
+                missing = []
+                for x in excl:
+                    hit = self.find(kws[key], x)
+                    if hit:
+                        kws[key].remove(hit)
+                    else:
+                        missing.append(x)
+                lines.append(f"✏️ Atualizada em {label(g)}: {fmt_entry(key, kws[key])}")
+                if missing:
+                    lines.append(f"Ela não ignorava: {', '.join(missing)}")
             else:
-                missing.append(w)
+                lines.append(f"🗑 Removida de {label(g)}: {fmt_entry(key, kws.pop(key))}")
         self.state.save()
-        lines = [f"🗑 Removida de {label(g)}: {', '.join(removed)}"] if removed else []
-        lines += [f"Não achei em {label(g)}: {', '.join(missing)}"] if missing else []
         return "\n".join(lines)
 
     async def cmd_rmgroup(self, arg: str) -> str:
@@ -479,7 +559,7 @@ class App:
         names = [GERAL, *sorted(g for g in self.state.groups if g != GERAL)]
         blocks = []
         for g in names:
-            kws = "\n".join(f"• {k}" for k in self.state.groups[g]) or "(vazio)"
+            kws = "\n".join(f"• {fmt_entry(k, ex)}" for k, ex in self.state.groups[g].items()) or "(vazio)"
             blocks.append(f"{label(g)}{' (todos os canais)' if g == GERAL else ''}:\n{kws}")
         chs = "\n".join(
             f"• {a}: {c['title']} — {self.reads(a)}" for a, c in self.state.channels.items()

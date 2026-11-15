@@ -26,10 +26,20 @@ Dá pra separar as palavras em grupos e escolher quais canais leem cada grupo. A
 /watch https://t.me/exemplo_hardware hardware #pc
 ```
 
+Quando uma palavra começa a trazer anúncio que você não quer, ligue a ela uma lista do que ignorar com `-[...]`:
+
+```
+/add switch 2 -[case, capa protetora, película]
+```
+
+Agora um post com "switch 2" só chega se não citar nenhum desses itens. A lista cresce conforme você vê anúncio errado. `/add switch 2 -[skin]` soma mais um e `/rm switch 2 -[skin]` tira. Cada palavra tem a própria lista. A exclusão olha o post inteiro, então um "Switch 2 com case de brinde" também é cortado.
+
 | Comando | O que faz |
 |---|---|
 | `/add three houses` | vigia uma palavra no grupo geral, que todo canal lê |
 | `/add ssd, rtx 4060 #pc` | vigia palavras num grupo e cria o grupo se ele não existir |
+| `/add switch 2 -[case, capa]` | ignora os posts dessa palavra que citem case ou capa |
+| `/rm switch 2 -[capa]` | para de ignorar capa |
 | `/rm ssd #pc` | para de vigiar uma palavra |
 | `/rmgroup #pc` | apaga um grupo |
 | `/watch <link> <apelido> #pc` | vigia um canal, os grupos no fim são opcionais |
@@ -37,7 +47,7 @@ Dá pra separar as palavras em grupos e escolher quais canais leem cada grupo. A
 | `/link <apelido> #pc` | faz o canal ler mais um grupo, `/unlink` desfaz |
 | `/list` | mostra grupos, palavras e canais |
 
-Maiúscula e acento não importam. Palavra com mais de um termo vira frase: `three houses` pega "Three Houses" e "ThreeHouses", mas ignora um post que só fala "Three".
+Maiúscula e acento não importam. Palavra com mais de um termo vira frase: `three houses` pega "Three Houses" e "ThreeHouses", mas ignora um post que só fala "Three". Exclusão bate por palavra inteira e aceita plural: `-[capa]` corta "capas", mas não "capacidade".
 
 ## Como funciona
 

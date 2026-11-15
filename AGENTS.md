@@ -79,11 +79,16 @@ Login caído: `UnauthorizedError` ou `AuthKeyDuplicatedError` fazem `poll_loop` 
 
 Comandos: `on_command` despacha pros métodos `cmd_*` e só responde a `state.owner`.
 
+Argumento de `/add` e `/rm`: `split_groups()` tira o `#grupo`, `split_top()` separa as palavras por vírgula fora de colchetes e `parse_entries()` usa `EXCL_RE` pra extrair exclusões, tanto `-[a, b c]` quanto o atalho `-palavra`. Colchete sem par ou exclusão sem palavra antes levantam `UserError`. `/add` numa palavra que já existe só soma as exclusões novas. `/rm` com `-[...]` tira só as exclusões, sem `-[...]` tira a palavra inteira.
+
 ## Estado
 
 ```json
 {
-  "groups": {"geral": ["three houses"], "pc": ["ssd", "rtx 4060"]},
+  "groups": {
+    "geral": {"three houses": [], "switch 2": ["case", "capa protetora"]},
+    "pc": {"ssd": [], "rtx 4060": []}
+  },
   "channels": {
     "hardware": {"id": -1001234567890, "title": "...", "link": "https://t.me/...", "groups": ["pc"], "last_id": 123}
   },
@@ -95,7 +100,8 @@ Comandos: `on_command` despacha pros métodos `cmd_*` e só responde a `state.ow
 
 - `geral` sempre existe e todo canal lê. Não pode ser apagado nem desligado de um canal.
 - Apelidos ficam em minúsculo. Nomes de grupo passam por `norm()`.
-- O formato antigo `{"keywords": [...]}` vira `groups.geral` em `State.__init__` e é gravado no próximo `save()`. Qualquer mudança de formato precisa de migração ali.
+- `groups` mapeia grupo pra `{palavra: [exclusões]}`. A ordem de inserção é preservada e o `/list` usa ela.
+- Formatos antigos migram em `State.__init__`. `{"keywords": [...]}` vira `groups.geral`, e grupo salvo como lista vira dict sem exclusões. O formato novo é gravado no próximo `save()`. Qualquer mudança de formato precisa de migração ali.
 - `save()` é atômico, grava num arquivo temporário e usa `os.replace`.
 
 ## Matching
@@ -103,10 +109,12 @@ Comandos: `on_command` despacha pros métodos `cmd_*` e só responde a `state.ow
 - `norm()` deixa tudo minúsculo, tira acento e junta espaços.
 - `keyword_re()` exige início de palavra com `(?<!\w)`, liga os termos com `[\W_]*` e não ancora o fim.
 - Resultado: `fone` pega "fones", `tv` não pega "atv", `air fryer` pega "airfryer", `three houses` não pega "three" sozinho.
+- `exclusion_re()` é mais estrito. Exige palavra inteira com `(?!\w)` no fim e aceita plural `(?:e?s)?` em cada termo. `capa` pega "capas" e não pega "capacidade". A escolha é de propósito: exclusão que bate demais faz o usuário perder promoção.
+- `matching(entries, texto)` recebe `[(palavra, exclusões)]` vindo de `State.keywords_for()`. Uma palavra só conta se ela aparece e nenhuma das exclusões dela aparece. A exclusão vale só pra palavra dela, então outro termo pode encaminhar o mesmo post.
 
 ## Regras
 
 - Nunca leia, imprima, copie pra fora da máquina ou commite `.env`, `*.session*` e `state.json`.
 - Nunca abra `sessao_usuario.session` em dois processos ao mesmo tempo. Isso inclui rodar o script com o serviço ativo e usar uma cópia da sessão em outra máquina. O Telegram responde com `AUTH_KEY_DUPLICATED` e derruba a sessão.
-- Não teste chamando a API real em loop. A lógica pura, `norm`, `matching`, `parse_link`, `albums` e os `cmd_*`, dá pra testar com `App.__new__(App)`, um `State` num arquivo temporário e clientes falsos.
+- Não teste chamando a API real em loop. A lógica pura, `norm`, `matching`, `parse_entries`, `parse_link`, `albums` e os `cmd_*`, dá pra testar com `App.__new__(App)`, um `State` num arquivo temporário e clientes falsos.
 - Commits seguem Conventional Commits sem escopo, por exemplo `feat: add x`.
