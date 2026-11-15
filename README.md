@@ -42,18 +42,32 @@ Maiúscula e acento não importam. Palavra com mais de um termo vira frase: `thr
 ## Como funciona
 
 ```mermaid
-flowchart LR
-    canais["Canais de promoção"]
-    script["promo_bot.py<br/>no seu computador"]
-    chat["Chat com o seu bot"]
-    cel["Seu celular"]
-    canais -- "sua conta lê a cada 5 a 15 s" --> script
-    script -- "post com palavra sua" --> chat
-    chat -- "notificação" --> cel
-    chat -. "/add, /watch" .-> script
+sequenceDiagram
+    actor V as Você
+    participant B as Seu bot
+    participant A as Canal de apoio
+    participant S as Sua conta<br/>no promo_bot.py
+    participant C as Canal de promoção
+
+    V->>B: /add three houses
+    loop a cada 5 a 15 s
+        S->>C: último post de cada canal?
+        C-->>S: id 14712
+        S->>C: posts depois do 14711
+        C-->>S: post novo
+        Note over S: filtra pelas suas palavras
+        opt post bateu
+            S->>A: encaminha o post
+            A-->>B: post novo no canal
+            B->>V: encaminha pra você, com notificação
+            B->>A: apaga o post
+        end
+    end
 ```
 
 Bot de Telegram só lê canal onde é admin, e você não é admin dos canais de promoção. Por isso o script loga na sua conta pra ler os canais e deixa só a entrega com o bot. Mensagem que vem do bot gera notificação. Mensagem da sua própria conta não geraria.
+
+A conta e o bot se encontram num canal privado que o script cria sozinho na primeira execução. A conta encaminha o post pra lá, o bot repassa pra você e apaga. O post chega com "Encaminhado de" e o nome do canal original.
 
 O script roda no seu computador, só abre conexões de saída e gasta uns 50 MB de RAM.
 
