@@ -81,6 +81,8 @@ Comandos: `on_command` despacha pros métodos `cmd_*` e só responde a `state.ow
 
 Argumento de `/add` e `/rm`: `split_groups()` tira o `#grupo`, `split_top()` separa as palavras por vírgula fora de colchetes e `parse_entries()` usa `EXCL_RE` pra extrair exclusões, tanto `-[a, b c]` quanto o atalho `-palavra`. Colchete sem par ou exclusão sem palavra antes levantam `UserError`. `/add` numa palavra que já existe só soma as exclusões novas. `/rm` com `-[...]` tira só as exclusões, sem `-[...]` tira a palavra inteira.
 
+`/mv <palavras> [#origem] #destino`: com um `#` a origem é o geral, com dois a ordem é origem e destino. A palavra sai da origem levando as exclusões, e se o destino já tiver a mesma palavra as listas se juntam. Destino inexistente é criado, mas se nada foi movido ele é descartado pra não deixar grupo vazio.
+
 ## Estado
 
 ```json

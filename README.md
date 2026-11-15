@@ -40,6 +40,7 @@ Agora um post com "switch 2" só chega se não citar nenhum desses itens. A list
 | `/add ssd, rtx 4060 #pc` | vigia palavras num grupo e cria o grupo se ele não existir |
 | `/add switch 2 -[case, capa]` | ignora os posts dessa palavra que citem case ou capa |
 | `/rm switch 2 -[capa]` | para de ignorar capa |
+| `/mv pokopia, zelda #jogos` | move palavras do geral pro grupo, junto com as exclusões delas. Com dois `#`, o primeiro é a origem |
 | `/rm ssd #pc` | para de vigiar uma palavra |
 | `/rmgroup #pc` | apaga um grupo |
 | `/watch <link> <apelido> #pc` | vigia um canal, os grupos no fim são opcionais |

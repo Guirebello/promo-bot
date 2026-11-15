@@ -41,6 +41,7 @@ GERAL = "geral"  # grupo lido por todos os canais; não pode ser apagado
 COMMANDS = [
     ("add", "vigiar: /add <palavra> [-[ignorar, ...]] [#grupo]"),
     ("rm", "parar de vigiar ou de ignorar: /rm <palavra> [-[...]] [#grupo]"),
+    ("mv", "mover palavras: /mv <palavras> [#origem] #destino"),
     ("rmgroup", "apagar grupo: /rmgroup #grupo"),
     ("watch", "vigiar canal: /watch <link> <apelido> [#grupos]"),
     ("unwatch", "parar de vigiar canal: /unwatch <apelido>"),
@@ -54,6 +55,8 @@ HELP = """Palavras (sem #grupo vão pro geral, que todo canal lê):
 /add <palavra> -[a, b] — ignorar posts dessa palavra que citem "a" ou "b" (soma à lista)
 /rm <palavra> -[a] — parar de ignorar "a"
 /rm <palavras> [#grupo] — parar de vigiar (some junto com o que ela ignora)
+/mv <palavras> #destino — mover do geral pro grupo (leva as exclusões)
+/mv <palavras> #origem #destino — mover entre grupos
 /rmgroup #grupo — apagar grupo
 
 Canais:
@@ -402,6 +405,7 @@ class App:
         handler = {
             "add": self.cmd_add,
             "rm": self.cmd_rm,
+            "mv": self.cmd_mv,
             "rmgroup": self.cmd_rmgroup,
             "watch": self.cmd_watch,
             "unwatch": self.cmd_unwatch,
@@ -481,6 +485,42 @@ class App:
             else:
                 lines.append(f"🗑 Removida de {label(g)}: {fmt_entry(key, kws.pop(key))}")
         self.state.save()
+        return "\n".join(lines)
+
+    async def cmd_mv(self, arg: str) -> str:
+        usage = "Uso: /mv <palavras> [#origem] #destino\nEx: /mv pokopia, zelda #jogos"
+        rest, groups = split_groups(arg)
+        if not 1 <= len(groups) <= 2:
+            raise UserError(usage)
+        src, dst = (GERAL, groups[0]) if len(groups) == 1 else groups
+        if src == dst:
+            raise UserError("Origem e destino são o mesmo grupo.")
+        entries = parse_entries(rest)
+        if not entries:
+            raise UserError(usage)
+        if any(excl for _, excl in entries):
+            raise UserError("O /mv já leva as exclusões junto; mande só as palavras.")
+        src_kws = self.state.group(src)
+        is_new = dst not in self.state.groups
+        dst_kws = self.state.groups.setdefault(dst, {})
+        moved, missing = [], []
+        for kw, _ in entries:
+            key = self.find(src_kws, kw)
+            if key is None:
+                missing.append(kw)
+                continue
+            excl = src_kws.pop(key)
+            dkey = self.find(dst_kws, key) or key
+            merged = dst_kws.setdefault(dkey, [])
+            merged += [x for x in excl if not self.find(merged, x)]
+            moved.append(fmt_entry(dkey, merged))
+        if is_new and not moved:
+            del self.state.groups[dst]  # nada movido: não deixa grupo vazio pra trás
+        self.state.save()
+        lines = [f"📦 Movidas de {label(src)} pra {label(dst)}:", *(f"• {m}" for m in moved)] if moved else []
+        lines += [f"Não achei em {label(src)}: {', '.join(missing)}"] if missing else []
+        if is_new and moved:
+            lines.append(f"Grupo novo. Ligue a canais com /link <apelido> #{dst}")
         return "\n".join(lines)
 
     async def cmd_rmgroup(self, arg: str) -> str:
